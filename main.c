@@ -10,20 +10,19 @@
 */
 
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include "io_utils.h"
 #include "list.h"
-#include "operation.h"
+#include "project_types.h"
 
 static int find_proc(int *states);
 static list* parse_file(const char *const pathname);
-static void start_processors(void);
-static void stop_execution(int signal);
+static thread_args* start_threads(int n_threads);
 
 /**
 	Carries out simulation setup and management.
@@ -32,22 +31,25 @@ static void stop_execution(int signal);
 */
 int main(int argc, char *argv[]) {
 	int *results, *states;
-	int i, op_count, proc_id, processors;
+	int i, op_count, processor_id, n_threads, free_count;
 	char *tmp_operator, *cmd;
 	list *commands;
 	operation *operations;
+	pthread_t *threads;
+	thread_args *arguments;
 	
 	if(argc != 3) {
 		write_to_fd(2, "Usage: main.x <source file> <results file>\n");
 		exit(1);
 	}
 	commands = parse_file(argv[1]);
-	processors = atoi(list_extract(commands));
-	if (processors <= 0) {
-		write_to_fd(2, "Invalid number of processors\n");
+	n_threads = atoi(list_extract(commands));
+	if (n_threads <= 0) {
+		write_to_fd(2, "Invalid number of threads\n");
 		exit(1);
 	}
-	write_with_int(1, "Number of processors: ", processors);
+	free_count = n_threads;
+	write_with_int(1, "Number of threads: ", n_threads);
 	op_count = list_count(commands);
 	if (op_count == 0) {
 		write_to_fd(2, "No operations provided\n");
@@ -62,42 +64,42 @@ int main(int argc, char *argv[]) {
 	
 	// Creazione mutex (uno per proc) e lock iniziali
 
-	operations = (operation *) malloc(op_count * sizeof(operation));
-	states = (int *) malloc(processors * sizeof(int));
+	operations = (operation *) malloc(n_threads * sizeof(operation));
+	states = (int *) malloc(n_threads * sizeof(int));
 	
-	for (i = 0; i < processors; ++i)
+	for (i = 0; i < n_threads; ++i)
 		states[i] = 0;
 	
-	start_processors();
+	arguments = start_threads(n_threads);
 	for (i = 1; list_count(commands) > 0; ++i) {
 		cmd = list_extract(commands);
 		write_with_int(1, "\nOperation #", i);
-		proc_id = atoi(strtok(cmd, " "));
+		processor_id = atoi(strtok(cmd, " "));
 		// Stop se nessuno libero
-		if (proc_id-- == 0) {
-			proc_id = find_proc(states);
+		if (processor_id-- == 0) {
+			processor_id = find_proc(states);
 		}
-		write_with_int(1, "Waiting for processor ", proc_id + 1);
-		// Lock M[proc_id]
-		write_with_int(1, "Delivering operation to processor ", proc_id + 1);
-		if (states[proc_id]++ != 0) {
-			results[states[proc_id] * -1] = operations[proc_id].num1;
-			write_with_int(1, "Previous result: ", operations[proc_id].num1);
+		write_with_int(1, "Waiting for processor ", processor_id + 1);
+		// Lock M[processor_id]
+		write_with_int(1, "Delivering operation to processor ", processor_id + 1);
+		if (states[processor_id]++ != 0) {
+			results[states[processor_id] * -1] = operations[processor_id].num1;
+			write_with_int(1, "Previous result: ", operations[processor_id].num1);
 		}
-		operations[proc_id].num1 = atoi(strtok(NULL, " "));
+		operations[processor_id].num1 = atoi(strtok(NULL, " "));
 		tmp_operator = strtok(NULL, " ");
-		operations[proc_id].op = *tmp_operator;
-		operations[proc_id].num2 = atoi(strtok(NULL, " "));
-		states[proc_id] = i;
-		write_with_int(1, "Operation delivered. Unblocking processor ", proc_id + 1);
-		// Unlock M[proc_id]
+		operations[processor_id].op = *tmp_operator;
+		operations[processor_id].num2 = atoi(strtok(NULL, " "));
+		states[processor_id] = i;
+		write_with_int(1, "Operation delivered. Unblocking processor ", processor_id + 1);
+		// Unlock M[processor_id]
 		// Yield
 		free(cmd);
 	}
 	
 	list_destruct(commands);
 	
-	for (i = 0; i < processors; ++i) {
+	for (i = 0; i < n_threads; ++i) {
 		// Lock M[i]
 		write_with_int(1, "\nPassing termination command to processor #", i + 1);
 		if (states[i]++ != 0) {
@@ -108,11 +110,12 @@ int main(int argc, char *argv[]) {
 		// Unlock M[i]
 	}
 
-	for (i = 0; i < processors; ++i) 
+	for (i = 0; i < n_threads; ++i) 
 		if(wait(NULL) == -1)
 			write_to_fd(2, "Wait failed\n");
-			
-	write_to_fd(1, "\nAll processors exited. Writing output file\n");
+	
+	free(arguments);		
+	write_to_fd(1, "\nAll n_threads exited. Writing output file\n");
 	write_results(argv[2], results, op_count);
 	exit(0);
 }
@@ -173,17 +176,21 @@ static list* parse_file(const char *const pathname) {
 }
 
 /**
-	Forks and executes the required number of processors.
+	Creates the required number of threads.
+	@param n_threads The number of threads
 */
-static void start_processors(void) {
-	int i, pid;
-	char proc_id[8], nsems[8];
+static thread_args* start_threads(int n_threads) {
+	int i;
+	thread_args *arguments;
 
-	if(itoa((2 * processors) + 2, nsems, 8) == -1) {
-		write_to_fd(2, "Failed to convert number of semaphores\n");	
+	arguments = (thread_args *) malloc(n_threads * sizeof(thread_args));
+	if(arguments == NULL) {
+		write_to_fd(2, "Failed to allocate arguments array\n");
 		exit(1);
 	}
-	for (i = 0; i < processors; ++i) {
+
+	for (i = 0; i < n_threads; ++i) {
 		// pthread_create
 	}
+	return arguments;
 }
