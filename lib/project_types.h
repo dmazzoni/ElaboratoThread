@@ -19,22 +19,30 @@ typedef struct operation {
 	int num2;
 } operation;
 
-
+/// Used to pass arguments to processor threads
 typedef struct thread_args {
+	/// The identification number of the processor
 	int processor_id;
 	
+	/// The first mutex for synchronization on operation @c oper
 	pthread_mutex_t *mutex1;
 
+	/// The second mutex for synchronization on operation @c oper
 	pthread_mutex_t *mutex2;
 
+	/// The mutex for the condition variable
 	pthread_mutex_t *cond_mutex;
 
+	/// The operation to compute
 	operation *oper;
 
+	/// The pointer to the states array
 	int *state;
 
+	/// The pointer to the free threads counter
 	int *free_count;
 
+	/// The condition variable
 	pthread_cond_t *cond;
 } thread_args;
 
