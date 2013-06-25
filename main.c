@@ -18,11 +18,12 @@
 #include <unistd.h>
 #include "io_utils.h"
 #include "list.h"
+#include "mutex_utils.h"
 #include "project_types.h"
 
-static int find_proc(int *states);
+static int find_proc(int *states, pthread_mutex_t *mutex);
 static list* parse_file(const char *const pathname);
-static thread_args* start_threads(int n_threads);
+static void start_threads(pthread_t *threads, int n_threads, thread_args *args, pthread_mutex_t *mutexes, int *states, int *free_count, operation *operations);
 
 /**
 	Carries out simulation setup and management.
@@ -35,6 +36,8 @@ int main(int argc, char *argv[]) {
 	char *tmp_operator, *cmd;
 	list *commands;
 	operation *operations;
+	pthread_cond_t cond;
+	pthread_mutex_t *mutexes;
 	pthread_t *threads;
 	thread_args *arguments;
 	
@@ -56,34 +59,42 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 	write_with_int(1, "Number of operations: ", op_count);		
-	results = (int *) malloc(op_count * sizeof(int));
-	if (results == NULL) {
-		write_to_fd(2, "Failed to allocate results array\n");
-		exit(1);	
-	}
 	
-	// Creazione mutex (uno per proc) e lock iniziali
-
+	cond = PTHREAD_COND_INITIALIZER;
+	results = (int *) malloc(op_count * sizeof(int));
+	mutexes = (pthread_mutex_t *) malloc((2 * n_threads + 1) * sizeof(pthread_mutex_t));
+	threads = (pthread_t *) malloc(n_threads * sizeof(pthread_t));
 	operations = (operation *) malloc(n_threads * sizeof(operation));
 	states = (int *) malloc(n_threads * sizeof(int));
+	arguments = (thread_args *) malloc(n_threads * sizeof(thread_args));
+	if (!results || !mutexes || !threads || !operations || !states || !arguments) {
+		write_to_fd(2, "Failed to allocate auxiliary data structures\n");
+		exit(1);
+	}
 	
+	init_mutexes(mutexes, 2 * n_threads + 1);
 	for (i = 0; i < n_threads; ++i)
 		states[i] = 0;
-	
-	arguments = start_threads(n_threads);
+
+	start_threads(threads, n_threads, arguments, mutexes, states, &free_count, operations);
 	for (i = 1; list_count(commands) > 0; ++i) {
 		cmd = list_extract(commands);
 		write_with_int(1, "\nOperation #", i);
 		processor_id = atoi(strtok(cmd, " "));
-		// Stop se nessuno libero
+		lock(&mutexes[2 * n_threads]);
+		while (free_count == 0)
+			pthread_cond_wait(&cond, &mutexes[2 * n_threads]);
+		--free_count;
+		unlock(&mutexes[2 * n_threads]);
 		if (processor_id-- == 0) {
-			processor_id = find_proc(states);
+			processor_id = find_proc(states, &mutexes[2 * n_threads]);
 		}
 		write_with_int(1, "Waiting for processor ", processor_id + 1);
-		// Lock M[processor_id]
+		lock(2 * processor_id);
+		unlock(2 * processor_id + 1);
 		write_with_int(1, "Delivering operation to processor ", processor_id + 1);
-		if (states[processor_id]++ != 0) {
-			results[states[processor_id] * -1] = operations[processor_id].num1;
+		if (states[processor_id] != 0) {
+			results((states[processor_id] + 1) * -1] = operations[processor_id].num1;
 			write_with_int(1, "Previous result: ", operations[processor_id].num1);
 		}
 		operations[processor_id].num1 = atoi(strtok(NULL, " "));
@@ -92,31 +103,45 @@ int main(int argc, char *argv[]) {
 		operations[processor_id].num2 = atoi(strtok(NULL, " "));
 		states[processor_id] = i;
 		write_with_int(1, "Operation delivered. Unblocking processor ", processor_id + 1);
-		// Unlock M[processor_id]
-		// Yield
+		lock(2 * processor_id + 1);
+		unlock(2 * processor_id);
+		if (pthread_yield() != 0) {
+			write_to_fd(2, "Failed to yield\n");
+			exit(1);
+		}
 		free(cmd);
 	}
 	
 	list_destruct(commands);
 	
 	for (i = 0; i < n_threads; ++i) {
-		// Lock M[i]
+		lock(2 * processor_id);
+		unlock(2 * processor_id + 1);
 		write_with_int(1, "\nPassing termination command to processor #", i + 1);
-		if (states[i]++ != 0) {
-			results[states[i] * -1] = operations[i].num1;
+		if (states[i] != 0) {
+			results[(states[i] + 1) * -1] = operations[i].num1;
 			write_with_int(1, "Last result: ", operations[i].num1);
 		}
 		operations[i].op = 'K';
-		// Unlock M[i]
+		unlock(2 * processor_id);
 	}
 
-	for (i = 0; i < n_threads; ++i) 
-		if(wait(NULL) == -1)
-			write_to_fd(2, "Wait failed\n");
-	
-	free(arguments);		
-	write_to_fd(1, "\nAll n_threads exited. Writing output file\n");
+	for (i = 0; i < n_threads; ++i) {
+		if (pthread_join(threads[i], NULL) != 0)
+			write_with_int(2, "Failed to join thread ", i + 1);
+		destroy(&mutex[2 * i]);
+		destroy(&mutex[2 * i + 1]);
+	}
+	destroy(&mutex[2 * n_threads]);
+			
+	free(mutexes);
+	free(threads);
+	free(arguments);
+	free(operations);
+	free(states);		
+	write_to_fd(1, "\nAll threads exited. Writing output file\n");
 	write_results(argv[2], results, op_count);
+	free(results);
 	exit(0);
 }
 
@@ -132,10 +157,10 @@ int main(int argc, char *argv[]) {
 static int find_proc(int *states) {
 	int i = 0;
 
-	// Lock area stati
+	lock(mutex);
 	write_to_fd(1, "Looking for a free processor\n");
 	while(states[i++] > 0);
-	// Unlock area stati
+	unlock(mutex);
 	write_with_int(1, "Found processor ", i);
 	return i - 1;
 }
@@ -177,20 +202,22 @@ static list* parse_file(const char *const pathname) {
 
 /**
 	Creates the required number of threads.
-	@param n_threads The number of threads
+	//TODO
 */
-static thread_args* start_threads(int n_threads) {
+static void start_threads(pthread_t *threads, int n_threads, thread_args *args, pthread_mutex_t *mutexes, int *states, int *free_count, operation *operations) {
 	int i;
-	thread_args *arguments;
-
-	arguments = (thread_args *) malloc(n_threads * sizeof(thread_args));
-	if(arguments == NULL) {
-		write_to_fd(2, "Failed to allocate arguments array\n");
-		exit(1);
-	}
-
+	
 	for (i = 0; i < n_threads; ++i) {
-		// pthread_create
+		args[i].processor_id = i;
+		args[i].mutex1 = &mutexes[2 * i];
+		args[i].mutex2 = &mutexes[2 * i + 1];
+		args[i].cond_mutex = &mutexes[2 * n_threads];
+		args[i].oper = &operations[i];
+		args[i].state = &states[i];
+		args[i].free_count = &free_count;
+		args[i].cond = &cond;
+		if (pthread_create(&threads[i], NULL, processor_routine, (void *) &args[i]) != 0) {
+			write_with_int(2, "Failed to create thread ", i + 1);
+		}
 	}
-	return arguments;
 }

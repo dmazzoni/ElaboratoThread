@@ -23,7 +23,7 @@ static void compute(operation *oper);
 	@param argc The number of arguments
 	@param argv The array of arguments
 */
-int main(int argc, char *argv[]) {
+int processor_routine(void *args) {
 	int proc_id, nsems;
 	int *states;
 	operation *operations;
