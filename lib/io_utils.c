@@ -14,46 +14,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include "io_utils.h"
-#include "ipc_utils.h"
 
 /// Constant buffer size
 #define BUF_SIZE 512
 
+static int itoa(int num, char *const buffer, int buf_len);
 static char read_char(int fd);
-
-/**
-	Converts an integer value into a string, which is stored
-	into buffer.
-	@param num The integer value to convert
-	@param buffer The array where to save the converted number
-	@param buf_len The maximum buffer length
-	@return 0 in case of success, -1 if an error occurs
-*/
-int itoa(int num, char *const buffer, int buf_len) {
-	int i = 0, j = 0;
-	char temp;
-	
-	if (num == 0)
-		buffer[i++] = '0';
-	if (num < 0) {
-		buffer[i++] = '-';
-		num *= -1;
-		j++;
-	}
-	while ((i < buf_len - 1) && (num > 0)) {
-		buffer[i++] = num % 10 + '0';
-		num /= 10;
-	}
-	if (num > 0)
-		return -1;
-	buffer[i--] = '\0';
-	while (j < i) {
-		temp = buffer[i];
-		buffer[i--] = buffer[j];
-		buffer[j++] = temp;
-	}
-	return 0;	
-}
 
 /**
 	Reads a line from the specified file descriptor and
@@ -96,7 +62,7 @@ void write_results(const char *const pathname, int *results, int length) {
 	fd = open(pathname, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
 	if(fd == -1) {
 		write_to_fd(2, "Failed to open results file\n");
-		kill_group(SIGTERM);
+		exit(1);
 	}
 
 	for(i = 0; i < length; ++i) {
@@ -105,7 +71,7 @@ void write_results(const char *const pathname, int *results, int length) {
 	
 	if(close(fd) == -1) {
 		write_to_fd(2, "Failed to close results file\n");
-		kill_group(SIGTERM);
+		exit(1);
 	}
 }
 
@@ -144,6 +110,40 @@ void write_with_int(int fd, const char *const s, int num) {
 	message[message_len - 1] = '\0';
 	write_to_fd(fd, message);
 	free(message);
+}
+
+/**
+	Converts an integer value into a string, which is stored
+	into buffer.
+	@param num The integer value to convert
+	@param buffer The array where to save the converted number
+	@param buf_len The maximum buffer length
+	@return 0 in case of success, -1 if an error occurs
+*/
+static int itoa(int num, char *const buffer, int buf_len) {
+	int i = 0, j = 0;
+	char temp;
+	
+	if (num == 0)
+		buffer[i++] = '0';
+	if (num < 0) {
+		buffer[i++] = '-';
+		num *= -1;
+		j++;
+	}
+	while ((i < buf_len - 1) && (num > 0)) {
+		buffer[i++] = num % 10 + '0';
+		num /= 10;
+	}
+	if (num > 0)
+		return -1;
+	buffer[i--] = '\0';
+	while (j < i) {
+		temp = buffer[i];
+		buffer[i--] = buffer[j];
+		buffer[j++] = temp;
+	}
+	return 0;	
 }
 
 /**

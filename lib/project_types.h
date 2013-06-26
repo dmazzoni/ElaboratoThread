@@ -25,10 +25,10 @@ typedef struct thread_args {
 	int processor_id;
 	
 	/// The first mutex for synchronization on operation @c oper
-	pthread_mutex_t *mutex1;
+	pthread_mutex_t *mutexA;
 
 	/// The second mutex for synchronization on operation @c oper
-	pthread_mutex_t *mutex2;
+	pthread_mutex_t *mutexB;
 
 	/// The mutex for the condition variable
 	pthread_mutex_t *cond_mutex;
@@ -36,7 +36,7 @@ typedef struct thread_args {
 	/// The operation to compute
 	operation *oper;
 
-	/// The pointer to the states array
+	/// The pointer to the processor state
 	int *state;
 
 	/// The pointer to the free threads counter

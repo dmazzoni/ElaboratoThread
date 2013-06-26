@@ -10,9 +10,9 @@
 */
 
 #include <stdlib.h>
-#include <sys/types.h>
 #include "io_utils.h"
-#include "operation.h"
+#include "mutex_utils.h"
+#include "project_types.h"
 
 static void compute(operation *oper);
 
@@ -20,33 +20,37 @@ static void compute(operation *oper);
 	Computes the operations while they are provided by 
 	the main thread and returns the results in the
 	corresponding memory locations, with synchronized access.
-	@param argc The number of arguments
-	@param argv The array of arguments
+	@param arguments The thread arguments 
+	@see thread_args
 */
-int processor_routine(void *args) {
-	int proc_id, nsems;
-	int *states;
-	operation *operations;
-		
-	proc_id = atoi(argv[1]);
-	write_with_int(1, "\tProcessor - Started as #", proc_id + 1);
+void* processor_routine(void *arguments) {
+	thread_args *args;
+	
+	args = (thread_args *) arguments;
+	write_with_int(1, "\tProcessor - Started as #", args->processor_id + 1);
 
 	while(1) {
-		// Lock M[proc_id]
-		if (operations[proc_id].op == 'K')
+		lock(args->mutexB);
+		unlock(args->mutexB);
+		lock(args->mutexA);
+		if (args->oper->op == 'K')
 			break;
-		write_with_int(1, "\tOperation received - Processor ", proc_id + 1);
-		compute(operations + proc_id);
-		// Lock area stati
-		states[proc_id] *= -1;
-		// Unlock area stati
-		write_with_int(1, "\tResult computed. Unblocking main - Processor ", proc_id + 1);
-		// Unlock M[proc_id]
-		// Incremento contatore (protetto da lock)
+		write_with_int(1, "\tOperation received - Processor ", args->processor_id + 1);
+		compute(args->oper);
+		lock(args->cond_mutex);
+		*(args->state) *= -1;
+		*(args->free_count)++;
+		write_with_int(1, "\tIncremento ", *(args->free_count));
+		if(*args->free_count == 1)
+			if(pthread_cond_signal(args->cond) != 0)
+				write_with_int(2, "\tFailed to signal condition - Processor ", args->processor_id + 1);
+		unlock(args->cond_mutex);
+		write_with_int(1, "\tResult computed. Unblocking main - Processor ", args->processor_id + 1);
+		unlock(args->mutexA);
 	}
 	
-	write_with_int(1, "\tExiting - Processor ", proc_id + 1);
-	// pthread_exit
+	write_with_int(1, "\tExiting - Processor ", args->processor_id + 1);
+	pthread_exit(NULL);
 }
 
 /**
