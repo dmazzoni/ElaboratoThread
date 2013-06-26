@@ -11,8 +11,8 @@
 
 #include <stdlib.h>
 #include "io_utils.h"
-#include "mutex_utils.h"
 #include "project_types.h"
+#include "sync_utils.h"
 
 static void compute(operation *oper);
 
@@ -30,25 +30,26 @@ void* processor_routine(void *arguments) {
 	write_with_int(1, "\tProcessor - Started as #", args->processor_id + 1);
 
 	while(1) {
-		lock(args->mutexB);
-		unlock(args->mutexB);
-		lock(args->mutexA);
+		mutex_lock(args->mutexB);
+		cond_signal(args->received_cond);
+		mutex_unlock(args->mutexB);
+		mutex_lock(args->mutexA);
 		if (args->oper->op == 'K')
 			break;
 		write_with_int(1, "\tOperation received - Processor ", args->processor_id + 1);
 		compute(args->oper);
-		lock(args->cond_mutex);
+		mutex_lock(args->free_cond_mutex);
 		*(args->state) *= -1;
-		*(args->free_count)++;
-		write_with_int(1, "\tIncremento ", *(args->free_count));
+		*(args->free_count) += 1;
 		if(*args->free_count == 1)
-			if(pthread_cond_signal(args->cond) != 0)
-				write_with_int(2, "\tFailed to signal condition - Processor ", args->processor_id + 1);
-		unlock(args->cond_mutex);
+			cond_signal(args->free_cond);
+		mutex_unlock(args->free_cond_mutex);
 		write_with_int(1, "\tResult computed. Unblocking main - Processor ", args->processor_id + 1);
-		unlock(args->mutexA);
+		cond_signal(args->ready_cond);
+		mutex_unlock(args->mutexA);
 	}
 	
+	mutex_unlock(args->mutexA);
 	write_with_int(1, "\tExiting - Processor ", args->processor_id + 1);
 	pthread_exit(NULL);
 }

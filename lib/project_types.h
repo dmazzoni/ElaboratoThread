@@ -30,9 +30,6 @@ typedef struct thread_args {
 	/// The second mutex for synchronization on operation @c oper
 	pthread_mutex_t *mutexB;
 
-	/// The mutex for the condition variable
-	pthread_mutex_t *cond_mutex;
-
 	/// The operation to compute
 	operation *oper;
 
@@ -40,10 +37,19 @@ typedef struct thread_args {
 	int *state;
 
 	/// The pointer to the free threads counter
-	int *free_count;
+	volatile int *free_count;
 
-	/// The condition variable
-	pthread_cond_t *cond;
+	/// Used by the main thread to wait when no processors are available
+	pthread_cond_t *free_cond;
+	
+	/// The mutex for @c free_cond
+	pthread_mutex_t *free_cond_mutex;
+	
+	/// Used by the processor to signal it has received the operation
+	pthread_cond_t *received_cond;
+	
+	/// Used by the processor to signal when the computation is done
+	pthread_cond_t *ready_cond;
 } thread_args;
 
 #endif
