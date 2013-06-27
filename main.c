@@ -24,7 +24,7 @@
 void* processor_routine(void *arguments);
 static int find_proc(int *states, pthread_mutex_t *mutex);
 static list* parse_file(const char *const pathname);
-static void start_threads(pthread_t *threads, int n_threads, thread_args *args, pthread_mutex_t *mutexes, int *states, volatile int *free_count, operation *operations, pthread_cond_t *conds);
+static void start_threads(pthread_t *threads, int n_threads, thread_args *args, pthread_mutex_t *mutexes, int *states, int *free_count, operation *operations, pthread_cond_t *conds);
 
 /**
 	Carries out simulation setup and management.
@@ -34,7 +34,7 @@ static void start_threads(pthread_t *threads, int n_threads, thread_args *args, 
 int main(int argc, char *argv[]) {
 	int *results, *states;
 	int i, op_count, processor_id, n_threads;
-	volatile int free_count;
+	int free_count;
 	char *tmp_operator, *cmd;
 	list *commands;
 	operation *operations;
@@ -206,9 +206,17 @@ static list* parse_file(const char *const pathname) {
 
 /**
 	Creates the required number of threads.
-	//TODO
+	@param threads The threads array
+	@param n_threads The number of threads
+	@param args The array of thread arguments
+	@param mutexes The array of mutexes
+	@param states The array of processor states
+	@param free_count The number of available threads
+	@param operations The array of operations
+	@param conds The array of condition variable
+	@see thread_args
 */
-static void start_threads(pthread_t *threads, int n_threads, thread_args *args, pthread_mutex_t *mutexes, int *states, volatile int *free_count, operation *operations, pthread_cond_t *conds) {
+static void start_threads(pthread_t *threads, int n_threads, thread_args *args, pthread_mutex_t *mutexes, int *states, int *free_count, operation *operations, pthread_cond_t *conds) {
 	int i;
 	
 	for (i = 0; i < n_threads; ++i) {

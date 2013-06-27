@@ -37,7 +37,7 @@ typedef struct thread_args {
 	int *state;
 
 	/// The pointer to the free threads counter
-	volatile int *free_count;
+	int *free_count;
 
 	/// Used by the main thread to wait when no processors are available
 	pthread_cond_t *free_cond;
